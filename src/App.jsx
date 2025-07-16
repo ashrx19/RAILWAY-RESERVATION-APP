@@ -60,10 +60,6 @@ function App() {
       </Router>
     </AuthProvider>
 
-
-
-
-
   );
 }
 
