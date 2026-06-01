@@ -12,6 +12,11 @@ const Home = () => {
         Book your train tickets easily and securely
       </p>
 
+
+
+
+
+
       {!user ? (
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
           <Link
