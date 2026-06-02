@@ -13,10 +13,6 @@ const Home = () => {
       </p>
 
 
-
-
-
-
       {!user ? (
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
           <Link
