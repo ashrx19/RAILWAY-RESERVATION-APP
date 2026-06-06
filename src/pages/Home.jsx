@@ -17,6 +17,9 @@ const Home = () => {
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
           <Link
             to="/login"
+
+
+            
             style={{
               padding: '1rem 2rem',
               backgroundColor: '#007bff',
