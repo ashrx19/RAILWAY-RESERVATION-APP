@@ -1,45 +1,64 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { read, write, id } = require('../jsonStore');
 const { auth } = require('../middleware/auth');
+const crypto = require('crypto');
 
 const router = express.Router();
+const publicUser = ({ _id, name, email, role }) => ({ id: _id, _id, name, email, role });
+const tokenFor = (user) => jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+const googleStates = new Map();
+const googleCallbackUrl = () => process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback';
+const frontendUrl = () => process.env.FRONTEND_URL || 'http://localhost:5173';
+
+router.get('/google', (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.status(503).json({ message: 'Google login is not configured yet' });
+  const state = crypto.randomBytes(32).toString('hex');
+  googleStates.set(state, Date.now());
+  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
+router.get('/google/callback', async (req, res) => {
+  const redirectWithError = (message) => res.redirect(`${frontendUrl()}/auth/google/callback?error=${encodeURIComponent(message)}`);
+  const createdAt = googleStates.get(req.query.state);
+  googleStates.delete(req.query.state);
+  if (!createdAt || Date.now() - createdAt > 10 * 60 * 1000 || req.query.error) return redirectWithError('Google sign-in was cancelled or expired');
+  try {
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code: req.query.code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: googleCallbackUrl(), grant_type: 'authorization_code' }) });
+    if (!tokenResponse.ok) throw new Error('Google could not exchange the authorization code');
+    const googleTokens = await tokenResponse.json();
+    const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${googleTokens.access_token}` } });
+    if (!profileResponse.ok) throw new Error('Google profile request failed');
+    const profile = await profileResponse.json();
+    if (!profile.email || profile.email_verified === false) throw new Error('A verified Google email address is required');
+    const data = read(); let user = data.users.find((entry) => entry.email.toLowerCase() === profile.email.toLowerCase());
+    if (!user) { user = { _id: id(), name: profile.name || profile.email.split('@')[0], email: profile.email, password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), role: 'user', googleId: profile.sub, createdAt: new Date().toISOString() }; data.users.push(user); write(data); }
+    res.redirect(`${frontendUrl()}/auth/google/callback?token=${encodeURIComponent(tokenFor(user))}`);
+  } catch (error) { console.error('Google OAuth error:', error.message); redirectWithError('Google sign-in failed. Please try again.'); }
+});
 
 router.post('/register', async (req, res) => {
   const { name, email, password } = req.body;
-  try {
-    if (await User.findOne({ email })) return res.status(400).json({ message: 'Email already exists' });
-    const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, password: hashed });
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.json({ user: { id: user._id, name: user.name, email: user.email, role: user.role }, token });
-  } catch (err) {
-    console.error(err); res.status(500).json({ message: 'Server error' });
-  }
+  const data = read();
+  if (data.users.some((user) => user.email.toLowerCase() === String(email).toLowerCase())) return res.status(400).json({ message: 'Email already exists' });
+  const user = { _id: id(), name, email, password: await bcrypt.hash(password, 10), role: 'user', createdAt: new Date().toISOString() };
+  data.users.push(user); write(data);
+  res.json({ user: publicUser(user), token: tokenFor(user) });
 });
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
-  try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(401).json({ message: 'Invalid credentials' });
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.json({ user: { id: user._id, name: user.name, email: user.email, role: user.role }, token });
-  } catch (err) {
-    console.error(err); res.status(500).json({ message: 'Server error' });
-  }
+  const user = read().users.find((entry) => entry.email.toLowerCase() === String(email).toLowerCase());
+  if (!user || !(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: 'Invalid credentials' });
+  res.json({ user: publicUser(user), token: tokenFor(user) });
 });
 
-router.get('/me', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select('-password');
-    res.json(user);
-  } catch (err) {
-    console.error(err); res.status(500).json({ message: 'Server error' });
-  }
+router.get('/me', auth, (req, res) => {
+  const user = read().users.find((entry) => entry._id === req.user.id);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  res.json(publicUser(user));
 });
 
 module.exports = router;
