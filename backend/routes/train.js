@@ -1,142 +1,60 @@
 const express = require('express');
-const Train = require('../models/Train');
+const { read, write, id } = require('../jsonStore');
 const { auth, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
+const sortTrains = (trains) => trains.sort((a, b) => `${a.from}${a.to}${a.departure}`.localeCompare(`${b.from}${b.to}${b.departure}`));
 
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, (req, res) => {
   const { from, to } = req.query;
-  const query = {};
-
-  if (from) {
-    query.from = new RegExp(`^${escapeRegex(from)}$`, 'i');
-  }
-
-  if (to) {
-    query.to = new RegExp(`^${escapeRegex(to)}$`, 'i');
-  }
-
-  const trains = await Train.find(query).sort({ from: 1, to: 1, departure: 1 });
-  res.json(trains);
+  let trains = read().trains;
+  if (from) trains = trains.filter((train) => train.from.toLowerCase() === from.toLowerCase());
+  if (to) trains = trains.filter((train) => train.to.toLowerCase() === to.toLowerCase());
+  res.json(sortTrains(trains));
 });
 
-router.get('/meta/options', auth, async (req, res) => {
-  const trains = await Train.find({}, 'from to number name departure arrival duration distance coaches').sort({
-    from: 1,
-    to: 1,
-  });
-
+router.get('/meta/options', auth, (req, res) => {
+  const trains = sortTrains(read().trains);
   const fromStations = [...new Set(trains.map((train) => train.from))];
-  const routesByFrom = trains.reduce((acc, train) => {
-    if (!acc[train.from]) {
-      acc[train.from] = [];
-    }
-
-    if (!acc[train.from].includes(train.to)) {
-      acc[train.from].push(train.to);
-    }
-
-    return acc;
-  }, {});
-
-  Object.keys(routesByFrom).forEach((station) => {
-    routesByFrom[station].sort((a, b) => a.localeCompare(b));
+  const routesByFrom = {};
+  trains.forEach((train) => {
+    routesByFrom[train.from] ??= [];
+    if (!routesByFrom[train.from].includes(train.to)) routesByFrom[train.from].push(train.to);
   });
-
-  res.json({
-    fromStations,
-    routesByFrom,
-    trains,
-  });
+  Object.values(routesByFrom).forEach((routes) => routes.sort());
+  res.json({ fromStations, routesByFrom, trains });
 });
 
-router.get('/:id/seats/:coachIndex', auth, async (req, res) => {
-  const train = await Train.findById(req.params.id);
+router.get('/:id/seats/:coachIndex', auth, (req, res) => {
+  const train = read().trains.find((entry) => entry._id === req.params.id);
+  const coach = train?.coaches[Number(req.params.coachIndex)];
   if (!train) return res.status(404).json({ message: 'Train not found' });
-
-  const coachIndex = parseInt(req.params.coachIndex);
-  if (coachIndex < 0 || coachIndex >= train.coaches.length) {
-    return res.status(404).json({ message: 'Coach not found' });
-  }
-
-  const coach = train.coaches[coachIndex];
-  res.json({
-    coach: coach,
-    layout: coach.layout,
-    availableSeats: coach.availableSeats
-  });
+  if (!coach) return res.status(404).json({ message: 'Coach not found' });
+  res.json({ coach, layout: coach.layout, availableSeats: coach.availableSeats });
 });
 
-router.post('/', auth, adminOnly, async (req, res) => {
-  const { coaches, ...trainData } = req.body;
-
-  // Calculate total seats
-  const totalSeats = coaches.reduce((sum, coach) => sum + coach.seats, 0);
-
-  // Generate seat layouts for each coach
-  const coachesWithLayout = coaches.map(coach => {
-    const layout = generateSeatLayout(coach.type, coach.seats);
-    return {
-      ...coach,
-      availableSeats: coach.seats,
-      layout: layout
-    };
-  });
-
-  const train = await Train.create({
-    ...trainData,
-    coaches: coachesWithLayout,
-    totalSeats: totalSeats
-  });
-
+router.post('/', auth, adminOnly, (req, res) => {
+  const data = read();
+  const train = prepareTrain({ ...req.body, _id: id() });
+  data.trains.push(train); write(data);
   res.status(201).json(train);
 });
 
-router.put('/:id', auth, adminOnly, async (req, res) => {
-  const { coaches, ...trainData } = req.body;
-
-  if (coaches) {
-    const totalSeats = coaches.reduce((sum, coach) => sum + coach.seats, 0);
-    trainData.totalSeats = totalSeats;
-    trainData.coaches = coaches.map(coach => ({
-      ...coach,
-      availableSeats: coach.seats,
-      layout: generateSeatLayout(coach.type, coach.seats)
-    }));
-  }
-
-  const train = await Train.findByIdAndUpdate(req.params.id, trainData, { new: true });
-  res.json(train);
+router.put('/:id', auth, adminOnly, (req, res) => {
+  const data = read(); const index = data.trains.findIndex((entry) => entry._id === req.params.id);
+  if (index < 0) return res.status(404).json({ message: 'Train not found' });
+  data.trains[index] = prepareTrain({ ...data.trains[index], ...req.body, _id: req.params.id });
+  write(data); res.json(data.trains[index]);
 });
 
-router.delete('/:id', auth, adminOnly, async (req, res) => {
-  await Train.findByIdAndDelete(req.params.id);
+router.delete('/:id', auth, adminOnly, (req, res) => {
+  const data = read(); data.trains = data.trains.filter((entry) => entry._id !== req.params.id); write(data);
   res.json({ message: 'Deleted' });
 });
 
-// Helper function to generate seat layout
-function generateSeatLayout(coachType, totalSeats) {
-  const rows = Math.ceil(totalSeats / 6); // 6 seats per row (3+3)
-  const layout = [];
-
-  for (let i = 0; i < rows; i++) {
-    const row = [];
-    for (let j = 0; j < 6; j++) {
-      const seatNumber = i * 6 + j + 1;
-      if (seatNumber <= totalSeats) {
-        row.push(`S${seatNumber}`);
-      } else {
-        row.push('');
-      }
-    }
-    layout.push(row);
-  }
-
-  return layout;
+function prepareTrain(train) {
+  const coaches = (train.coaches || []).map((coach) => ({ ...coach, availableSeats: coach.seats, layout: generateSeatLayout(coach.seats) }));
+  return { ...train, coaches, totalSeats: coaches.reduce((sum, coach) => sum + coach.seats, 0), status: train.status || 'active', updatedAt: new Date().toISOString() };
 }
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+function generateSeatLayout(totalSeats) { return Array.from({ length: Math.ceil(totalSeats / 6) }, (_, row) => Array.from({ length: 6 }, (_, col) => row * 6 + col < totalSeats ? `S${row * 6 + col + 1}` : '')); }
 module.exports = router;
