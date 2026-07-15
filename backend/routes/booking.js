@@ -1,148 +1,33 @@
 const express = require('express');
-const Booking = require('../models/Booking');
-const Train = require('../models/Train');
-const { auth, adminOnly } = require('../middleware/auth');
-
+const { read, write, id } = require('../jsonStore');
+const { auth } = require('../middleware/auth');
 const router = express.Router();
 
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, (req, res) => {
   const { trainId, journeyDate, coachType, coachIndex, passengers, selectedSeats } = req.body;
-
-  const train = await Train.findById(trainId);
+  const data = read(); const train = data.trains.find((entry) => entry._id === trainId); const coach = train?.coaches[Number(coachIndex)];
   if (!train) return res.status(404).json({ message: 'Train not found' });
-
-  if (coachIndex < 0 || coachIndex >= train.coaches.length) {
-    return res.status(404).json({ message: 'Coach not found' });
-  }
-
-  const coach = train.coaches[coachIndex];
-  if (coach.type !== coachType) {
-    return res.status(400).json({ message: 'Coach type mismatch' });
-  }
-
-  if (coach.availableSeats < passengers.length) {
-    return res.status(400).json({ message: 'Not enough seats available' });
-  }
-
-  if (!Array.isArray(passengers) || passengers.length === 0) {
-    return res.status(400).json({ message: 'Passenger details are required' });
-  }
-
-  if (!Array.isArray(selectedSeats) || selectedSeats.length !== passengers.length) {
-    return res.status(400).json({ message: 'Selected seats must match passenger count' });
-  }
-
-  const uniqueSeats = new Set(selectedSeats);
-  if (uniqueSeats.size !== selectedSeats.length) {
-    return res.status(400).json({ message: 'Duplicate seats selected' });
-  }
-
-  const layout = coach.layout;
-  const availableSeatSet = new Set(
-    layout.flat().filter((seat) => seat && seat !== 'booked')
-  );
-
-  for (const seat of selectedSeats) {
-    if (!availableSeatSet.has(seat)) {
-      return res.status(400).json({ message: `Seat ${seat} is no longer available` });
-    }
-  }
-
-  for (let i = 0; i < layout.length; i++) {
-    for (let j = 0; j < layout[i].length; j++) {
-      if (selectedSeats.includes(layout[i][j])) {
-        layout[i][j] = 'booked';
-      }
-    }
-  }
-
-  const passengersWithSeats = passengers.map((passenger, index) => ({
-    ...passenger,
-    seatNumber: selectedSeats[index]
-  }));
-
-  const totalFare = coach.fare * passengers.length;
-
-  const booking = await Booking.create({
-    user: req.user.id,
-    train: trainId,
-    journeyDate,
-    coachType,
-    coachIndex,
-    passengers: passengersWithSeats,
-    totalFare
-  });
-
-  // Update coach available seats
-  coach.availableSeats -= passengers.length;
-  await train.save();
-
-  res.status(201).json(booking);
+  if (!coach || coach.type !== coachType) return res.status(400).json({ message: 'Coach not found or type mismatch' });
+  if (!Array.isArray(passengers) || !passengers.length || !Array.isArray(selectedSeats) || selectedSeats.length !== passengers.length) return res.status(400).json({ message: 'Passenger and seat details must match' });
+  const available = new Set(coach.layout.flat().filter((seat) => seat && seat !== 'booked'));
+  if (new Set(selectedSeats).size !== selectedSeats.length || selectedSeats.some((seat) => !available.has(seat))) return res.status(400).json({ message: 'One or more selected seats are unavailable' });
+  coach.layout = coach.layout.map((row) => row.map((seat) => selectedSeats.includes(seat) ? 'booked' : seat)); coach.availableSeats -= passengers.length;
+  const booking = { _id: id(), user: req.user.id, train: trainId, journeyDate, coachType, coachIndex: Number(coachIndex), passengers: passengers.map((passenger, index) => ({ ...passenger, seatNumber: selectedSeats[index] })), totalFare: coach.fare * passengers.length, status: 'booked', pnr: `PNR${Date.now()}${Math.random().toString(36).slice(2, 7).toUpperCase()}`, bookingId: `BK${Date.now()}`, createdAt: new Date().toISOString() };
+  data.bookings.push(booking); write(data); res.status(201).json(booking);
 });
 
-router.get('/', auth, async (req, res) => {
-  const query = req.user.role === 'admin' ? {} : { user: req.user.id };
-  const bookings = await Booking.find(query)
-    .populate('train')
-    .populate('user', 'name email')
-    .sort({ createdAt: -1 });
+router.get('/', auth, (req, res) => {
+  const data = read(); const bookings = data.bookings.filter((booking) => req.user.role === 'admin' || booking.user === req.user.id).map((booking) => ({ ...booking, train: data.trains.find((train) => train._id === booking.train), user: data.users.find((user) => user._id === booking.user) })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   res.json(bookings);
 });
 
-router.put('/:id/cancel', auth, async (req, res) => {
-  const booking = await Booking.findById(req.params.id);
+router.put('/:id/cancel', auth, (req, res) => {
+  const data = read(); const booking = data.bookings.find((entry) => entry._id === req.params.id);
   if (!booking) return res.status(404).json({ message: 'Booking not found' });
-
-  if (booking.user.toString() !== req.user.id && req.user.role !== 'admin') {
-    return res.status(403).json({ message: 'Not allowed' });
-  }
-
-  if (booking.status === 'cancelled') {
-    return res.status(400).json({ message: 'Booking already cancelled' });
-  }
-
-  booking.status = 'cancelled';
-  await booking.save();
-
-  // Restore seats
-  const train = await Train.findById(booking.train);
-  const coach = train.coaches[booking.coachIndex];
-
-  // Free up seats in layout
-  booking.passengers.forEach(passenger => {
-    for (let i = 0; i < coach.layout.length; i++) {
-      for (let j = 0; j < coach.layout[i].length; j++) {
-        if (coach.layout[i][j] === 'booked' && isSeatPosition(coach.layout, passenger.seatNumber, i, j)) {
-          coach.layout[i][j] = passenger.seatNumber;
-          break;
-        }
-      }
-    }
-  });
-
-  coach.availableSeats += booking.passengers.length;
-  await train.save();
-
-  res.json(booking);
+  if (booking.user !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ message: 'Not allowed' });
+  if (booking.status === 'cancelled') return res.status(400).json({ message: 'Booking already cancelled' });
+  const train = data.trains.find((entry) => entry._id === booking.train); const coach = train.coaches[booking.coachIndex];
+  booking.passengers.forEach(({ seatNumber }) => { const n = Number(seatNumber.slice(1)); const row = Math.floor((n - 1) / 6); const col = (n - 1) % 6; coach.layout[row][col] = seatNumber; });
+  coach.availableSeats += booking.passengers.length; booking.status = 'cancelled'; write(data); res.json(booking);
 });
-
 module.exports = router;
-
-function isSeatPosition(layout, seatNumber, rowIndex, colIndex) {
-  let counter = 0;
-
-  for (let i = 0; i < layout.length; i++) {
-    for (let j = 0; j < layout[i].length; j++) {
-      if (layout[i][j] === '' || layout[i][j] === undefined) {
-        continue;
-      }
-
-      counter += 1;
-      if (`S${counter}` === seatNumber) {
-        return i === rowIndex && j === colIndex;
-      }
-    }
-  }
-
-  return false;
-}
