@@ -373,4 +373,8 @@ async function seedTrains() {
   }
 }
 
-seedTrains();
+if (require.main === module) {
+  seedTrains();
+}
+
+module.exports = { sampleTrains, generateLayout };

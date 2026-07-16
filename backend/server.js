@@ -1,5 +1,4 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
@@ -22,12 +21,4 @@ app.get('/', (req, res) => res.send({ message: 'Railway reservation API running'
 
 const PORT = process.env.PORT || 5000;
 
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
-  })
-  .catch((error) => {
-    console.error('DB connection error', error);
-    process.exit(1);
-  });
+app.listen(PORT, () => console.log(`Server listening on port ${PORT} (local JSON storage)`));
