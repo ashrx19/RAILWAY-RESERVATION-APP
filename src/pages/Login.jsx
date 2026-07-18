@@ -66,6 +66,18 @@ const Login = () => {
           {loading ? 'Logging in...' : 'Login'}
         </button>
       </form>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1.25rem 0', color: '#6c757d' }}>
+        <div style={{ height: '1px', flex: 1, background: '#dee2e6' }} />
+        <span>or</span>
+        <div style={{ height: '1px', flex: 1, background: '#dee2e6' }} />
+      </div>
+      <button
+        type="button"
+        onClick={() => { window.location.href = 'http://localhost:5000/api/auth/google'; }}
+        style={{ width: '100%', padding: '0.75rem', backgroundColor: 'white', color: '#333', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+      >
+        Continue with Google
+      </button>
       <p style={{ textAlign: 'center', marginTop: '1rem' }}>
         Don't have an account? <Link to="/register" style={{ color: '#007bff' }}>Register</Link>
       </p>

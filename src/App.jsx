@@ -9,6 +9,7 @@ import Register from './pages/Register';
 import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import BookTrain from './pages/BookTrain';
+import GoogleCallback from './pages/GoogleCallback';
 import './App.css';
 
 
@@ -25,6 +26,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/auth/google/callback" element={<GoogleCallback />} />
             <Route
               path="/dashboard"
               element={
