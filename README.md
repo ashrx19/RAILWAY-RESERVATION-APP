@@ -1,4 +1,31 @@
-# React + Vite
+# Railway Reservation App
+
+React and Express railway reservation project with local JSON persistence.
+
+## Run locally
+
+```powershell
+npm run dev
+cd backend
+npm start
+```
+
+The API runs at `http://localhost:5000` and initializes sample trains and local users in `backend/data/railway.json` on first use.
+
+## Google sign-in setup
+
+Add these to `backend/.env`:
+
+```env
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
+FRONTEND_URL=http://localhost:5173
+```
+
+In Google Cloud Console, register `http://localhost:5000/api/auth/google/callback` as an authorized redirect URI.
+
+---
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
