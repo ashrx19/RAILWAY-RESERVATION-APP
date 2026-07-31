@@ -4,51 +4,27 @@ const jwt = require('jsonwebtoken');
 const { read, write, id } = require('../jsonStore');
 const { auth } = require('../middleware/auth');
 const crypto = require('crypto');
+const passport = require('passport');
 
 const router = express.Router();
 const publicUser = ({ _id, name, email, role }) => ({ id: _id, _id, name, email, role });
 const tokenFor = (user) => jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-const googleStates = new Map();
-const googleCallbackUrl = () => process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback';
 const frontendUrl = () => process.env.FRONTEND_URL || 'http://localhost:5173';
 
-router.get('/google', (req, res) => {
+router.get('/google', (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.status(503).json({ message: 'Google login is not configured yet' });
-  const state = crypto.randomBytes(32).toString('hex');
-  googleStates.set(state, Date.now());
-  const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: googleCallbackUrl(), response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' });
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+  passport.authenticate('google', { scope: ['profile', 'email'], prompt: 'select_account' })(req, res, next);
 });
 
-async function finishGoogleLogin(code, state) {
-  const createdAt = googleStates.get(state);
-  googleStates.delete(state);
-  if (!createdAt || Date.now() - createdAt > 10 * 60 * 1000) throw new Error('Google sign-in was cancelled or expired');
+router.get('/google/callback', passport.authenticate('google', { failureRedirect: `${frontendUrl()}/auth/google/callback?error=Google%20sign-in%20failed` }), async (req, res) => {
   try {
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: googleCallbackUrl(), grant_type: 'authorization_code' }) });
-    if (!tokenResponse.ok) throw new Error('Google could not exchange the authorization code');
-    const googleTokens = await tokenResponse.json();
-    const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${googleTokens.access_token}` } });
-    if (!profileResponse.ok) throw new Error('Google profile request failed');
-    const profile = await profileResponse.json();
-    if (!profile.email || profile.email_verified === false) throw new Error('A verified Google email address is required');
-    const data = read(); let user = data.users.find((entry) => entry.email.toLowerCase() === profile.email.toLowerCase());
-    if (!user) { user = { _id: id(), name: profile.name || profile.email.split('@')[0], email: profile.email, password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), role: 'user', googleId: profile.sub, createdAt: new Date().toISOString() }; data.users.push(user); write(data); }
-    return { user: publicUser(user), token: tokenFor(user) };
-  } catch (error) { console.error('Google OAuth error:', error.message); throw error; }
-}
-
-router.post('/google/exchange', async (req, res) => {
-  try {
-    res.json(await finishGoogleLogin(req.body.code, req.body.state));
-  } catch (error) {
-    res.status(401).json({ message: error.message || 'Google sign-in failed' });
-  }
-});
-
-router.get('/google/callback', (req, res) => {
-  const params = new URLSearchParams({ code: req.query.code || '', state: req.query.state || '', error: req.query.error || '' });
-  res.redirect(`${frontendUrl()}/auth/google/callback?${params}`);
+    const profile = req.user;
+    const email = profile.emails?.[0]?.value;
+    if (!email) throw new Error('A Google email address is required');
+    const data = read(); let user = data.users.find((entry) => entry.email.toLowerCase() === email.toLowerCase());
+    if (!user) { user = { _id: id(), name: profile.displayName || email.split('@')[0], email, password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), role: 'user', googleId: profile.id, createdAt: new Date().toISOString() }; data.users.push(user); write(data); }
+    res.redirect(`${frontendUrl()}/auth/google/callback?token=${encodeURIComponent(tokenFor(user))}`);
+  } catch (error) { console.error('Google OAuth error:', error.message); res.redirect(`${frontendUrl()}/auth/google/callback?error=Google%20sign-in%20failed`); }
 });
 
 router.post('/register', async (req, res) => {
