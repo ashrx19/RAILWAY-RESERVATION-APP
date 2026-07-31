@@ -19,6 +19,8 @@ const trainRoutes = require('./routes/train');
 const bookingRoutes = require('./routes/booking');
 
 app.use('/api/auth', authRoutes);
+// Google Cloud redirects here; the API routes above remain available at /api/auth.
+app.use('/auth', authRoutes);
 app.use('/api/trains', trainRoutes);
 app.use('/api/bookings', bookingRoutes);
 
