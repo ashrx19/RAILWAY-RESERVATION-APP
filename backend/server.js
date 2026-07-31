@@ -3,9 +3,9 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 const session = require('express-session');
-const passport = require('./config/passport');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
+const passport = require('./config/passport');
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173', credentials: true }));
 app.use(express.json());
