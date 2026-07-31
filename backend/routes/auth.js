@@ -20,13 +20,12 @@ router.get('/google', (req, res) => {
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
-router.get('/google/callback', async (req, res) => {
-  const redirectWithError = (message) => res.redirect(`${frontendUrl()}/auth/google/callback?error=${encodeURIComponent(message)}`);
-  const createdAt = googleStates.get(req.query.state);
-  googleStates.delete(req.query.state);
-  if (!createdAt || Date.now() - createdAt > 10 * 60 * 1000 || req.query.error) return redirectWithError('Google sign-in was cancelled or expired');
+async function finishGoogleLogin(code, state) {
+  const createdAt = googleStates.get(state);
+  googleStates.delete(state);
+  if (!createdAt || Date.now() - createdAt > 10 * 60 * 1000) throw new Error('Google sign-in was cancelled or expired');
   try {
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code: req.query.code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: googleCallbackUrl(), grant_type: 'authorization_code' }) });
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: googleCallbackUrl(), grant_type: 'authorization_code' }) });
     if (!tokenResponse.ok) throw new Error('Google could not exchange the authorization code');
     const googleTokens = await tokenResponse.json();
     const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${googleTokens.access_token}` } });
@@ -35,8 +34,21 @@ router.get('/google/callback', async (req, res) => {
     if (!profile.email || profile.email_verified === false) throw new Error('A verified Google email address is required');
     const data = read(); let user = data.users.find((entry) => entry.email.toLowerCase() === profile.email.toLowerCase());
     if (!user) { user = { _id: id(), name: profile.name || profile.email.split('@')[0], email: profile.email, password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), role: 'user', googleId: profile.sub, createdAt: new Date().toISOString() }; data.users.push(user); write(data); }
-    res.redirect(`${frontendUrl()}/auth/google/callback?token=${encodeURIComponent(tokenFor(user))}`);
-  } catch (error) { console.error('Google OAuth error:', error.message); redirectWithError('Google sign-in failed. Please try again.'); }
+    return { user: publicUser(user), token: tokenFor(user) };
+  } catch (error) { console.error('Google OAuth error:', error.message); throw error; }
+}
+
+router.post('/google/exchange', async (req, res) => {
+  try {
+    res.json(await finishGoogleLogin(req.body.code, req.body.state));
+  } catch (error) {
+    res.status(401).json({ message: error.message || 'Google sign-in failed' });
+  }
+});
+
+router.get('/google/callback', (req, res) => {
+  const params = new URLSearchParams({ code: req.query.code || '', state: req.query.state || '', error: req.query.error || '' });
+  res.redirect(`${frontendUrl()}/auth/google/callback?${params}`);
 });
 
 router.post('/register', async (req, res) => {

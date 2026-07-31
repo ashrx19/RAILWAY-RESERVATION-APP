@@ -19,11 +19,11 @@ Add these to `backend/.env`:
 ```env
 GOOGLE_CLIENT_ID=your-client-id
 GOOGLE_CLIENT_SECRET=your-client-secret
-GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
+GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
 FRONTEND_URL=http://localhost:3000
 ```
 
-In Google Cloud Console, register `http://localhost:5000/api/auth/google/callback` as an authorized redirect URI.
+In Google Cloud Console, register `http://localhost:3000/auth/google/callback` as an authorized redirect URI.
 
 ---
 
