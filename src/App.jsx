@@ -11,6 +11,42 @@ import AdminDashboard from './pages/AdminDashboard';
 import BookTrain from './pages/BookTrain';
 import GoogleCallback from './pages/GoogleCallback';
 import './App.css';
+\\\\\\\\\\\\\\\\\
+
+
+
+
+
+
+
+
+
+\||\
+\\\
+
+|
+||
+
+|
+|
+
+||
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+
 
 
 function App() {
