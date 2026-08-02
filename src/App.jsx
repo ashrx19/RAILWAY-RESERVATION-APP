@@ -13,8 +13,6 @@ import GoogleCallback from './pages/GoogleCallback';
 import './App.css';
 
 
-
-
 function App() {
   return (
     <AuthProvider>
